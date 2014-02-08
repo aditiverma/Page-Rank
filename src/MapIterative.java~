@@ -1,0 +1,72 @@
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStreamReader;
+
+import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.FileSystem;
+import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.io.LongWritable;
+import org.apache.hadoop.io.Text;
+import org.apache.hadoop.mapred.JobConf;
+import org.apache.hadoop.mapred.MapReduceBase;
+import org.apache.hadoop.mapred.Mapper;
+import org.apache.hadoop.mapred.OutputCollector;
+import org.apache.hadoop.mapred.Reporter;
+
+	public  class MapIterative extends MapReduceBase implements Mapper<LongWritable, Text, Text, Text> {  
+		private Text word = new Text();
+//		private static int N;
+//		public void configure(JobConf job) {
+//		    N = job.getInt("N", 0);
+//		}
+		public void map(LongWritable key, Text value, OutputCollector<Text, Text> output, Reporter reporter) throws IOException {
+			String line = value.toString();
+			int indexBeforeRank = line.indexOf("\t");
+		//	if(indexBeforeRank!=-1)//
+		//	{
+				String inlinkPage = line.substring(0, indexBeforeRank);
+				String rest = line.substring(indexBeforeRank, line.length());
+				String []splitOutLinks = rest.split("\t");
+				String line2=null;
+				try{
+                    Path pt=new Path("s3n://pagerank12/PageRank.n.out/part-00001");///
+                    FileSystem fs = FileSystem.get(new Configuration());
+                    BufferedReader br=new BufferedReader(new InputStreamReader(fs.open(pt)));
+                    
+                    line2=br.readLine();
+            }catch(Exception e){
+            }
+				 String[] tokens = line2.split("=");
+				 
+				
+				 //int n = Integer.valueOf(line2);
+				 int n = Integer.valueOf(tokens[1]);
+				
+				 double initialRank= 1.0/n;
+				String rank= String.valueOf(initialRank);//"2"
+				int start=1;
+				if(isInteger(splitOutLinks[1]))//is double
+				{
+					rank = splitOutLinks[1];
+					start=2;
+				}
+				String outValue = rank+"\t"+inlinkPage+"\t"+(splitOutLinks.length-start+"\t");
+				StringBuilder allOutLinks = new StringBuilder();
+				for(int i=start;i<splitOutLinks.length;i++)
+				{
+					String outkey= splitOutLinks[i];
+					output.collect(new Text(outkey), new Text(outValue));
+					allOutLinks.append(splitOutLinks[i]+"\t");
+				}
+				output.collect(new Text(inlinkPage), new Text("\t\t"+allOutLinks.toString()));
+		//	}//if tab present
+		}
+		public static boolean isInteger(String s) {
+			try { 
+				Double.parseDouble(s); 
+			} catch(NumberFormatException e) { 
+				return false; 
+			}
+			return true;
+		}  
+	}

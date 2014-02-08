@@ -1,0 +1,111 @@
+
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.io.Reader;
+import java.io.StringReader;
+import java.util.*;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+import org.apache.hadoop.fs.FSDataOutputStream;
+import org.apache.hadoop.fs.FileSystem;
+import org.apache.hadoop.fs.FileUtil;
+import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.conf.*;
+import org.apache.hadoop.io.*;
+import org.apache.hadoop.mapred.*;
+import org.apache.hadoop.util.*;
+public class PageRank {
+	public static void main(String[] args) throws Exception {
+		/*Job1*/
+		JobConf conf = new JobConf(PageRank.class);
+		conf.setJobName("PageRank");//job name
+		conf.setInputFormat(XmlInputFormat.class); 
+		conf.set("xmlinput.start", "<page>");
+		conf.set("xmlinput.end", "</page>");
+		conf.set("mapred.textoutputformat.separator", "\t");
+		conf.setOutputKeyClass(Text.class);
+		conf.setOutputValueClass(Text.class);
+		conf.setMapperClass(Map.class);
+		conf.setReducerClass(Reduce.class);
+		conf.setOutputFormat(TextOutputFormat.class);
+		FileInputFormat.setInputPaths(conf, new Path(args[0]));
+		FileOutputFormat.setOutputPath(conf, new Path("s3n://pagerank12/tmp1"));
+		JobClient.runJob(conf);
+		Path f = new Path("s3n://pagerank12/PageRank.inlink.out");
+		FileSystem.get(conf).create(f);
+		FileUtil.copyMerge(FileSystem.get(conf), new Path("s3n://pagerank12/tmp1"),FileSystem.get(conf), new Path("s3n://pagerank12/PageRank.inlink.out"), true, conf,"");
+		
+		/*Job2*/
+		JobConf conf2 = new JobConf(PageRank.class);
+		conf2.setJobName("PageRankPages");//job name
+		conf2.setInputFormat(XmlInputFormat.class); 
+		conf2.set("xmlinput.start", "<page>");
+		conf2.set("xmlinput.end", "</page>");
+		conf2.set("mapred.textoutputformat.separator", "\t");
+		conf2.setOutputKeyClass(Text.class); //map
+		conf2.setOutputValueClass(IntWritable.class); //map
+		conf2.setMapperClass(MapPages.class);
+		conf2.setReducerClass(ReducePages.class);
+		conf2.setOutputFormat(TextOutputFormat.class);
+		FileInputFormat.setInputPaths(conf2, new Path(args[0]));//change input
+		FileOutputFormat.setOutputPath(conf2, new Path("s3n://pagerank12/tmp2"));
+		JobClient.runJob(conf2);
+		f = new Path("s3n://pagerank12/PageRank.n.out");
+		FileSystem.get(conf).create(f);
+		FileUtil.copyMerge(FileSystem.get(conf), new Path("s3n://pagerank12/tmp2"),FileSystem.get(conf), new Path("s3n://pagerank12/PageRank.n.out"), true, conf,"");
+		
+		/*Job3*/
+		String inputDir ="s3n://pagerank12/PageRank.inlink.out"; 
+		String outputDir1="s3n://pagerank12/PageRank.iter0.dir";//output iter 1 
+		for(int i=0;i<2;i++)//change to 8, and 1 to 8
+		{
+			JobConf conf3 = new JobConf(PageRank.class);
+			conf3.setJobName("PageRankIterative"+i);//job name
+			conf3.setMapperClass(MapIterative.class);
+		//	conf3.setCombinerClass(ReduceIterative.class);
+			conf3.setReducerClass(ReduceIterative.class);
+			conf3.set("mapred.textoutputformat.separator", "\t");
+			conf3.setInputFormat(TextInputFormat.class);       
+			conf3.setOutputKeyClass(Text.class);
+			conf3.setOutputValueClass(Text.class);
+			conf3.setOutputFormat(TextOutputFormat.class);
+			FileInputFormat.setInputPaths(conf3, new Path(inputDir));//initial input is the output of Part 1, with pagerank of 1 included per line, (also included N as static)
+			FileOutputFormat.setOutputPath(conf3, new Path(outputDir1));
+
+			JobClient.runJob(conf3);
+			String tmp = inputDir;
+			FileUtil.copyMerge(FileSystem.get(conf), new Path("s3n://pagerank12/PageRank.iter"+i+".dir"),FileSystem.get(conf), new Path("s3n://pagerank12/PageRank.iter"+i+".out"), true, conf,"");
+			outputDir1= "s3n://pagerank12/PageRank.iter"+(i+1)+".dir";//now a file,  give diff names above? file created?
+			inputDir="s3n://pagerank12/PageRank.iter"+i+".out";
+		}
+		FileUtil.copyMerge(FileSystem.get(conf), new Path("s3n://pagerank12/PageRank.iter7.dir"),FileSystem.get(conf), new Path("s3n://pagerank12/PageRank.iter7.out"), true, conf,"");
+		
+		/*Job4*/
+		JobConf conf4 = new JobConf(PageRank.class);
+		conf4.setJobName("PageRankSorted");//job name
+		conf4.setInputFormat(TextInputFormat.class); 
+		conf4.setOutputKeyClass(DoubleWritable.class); //map
+		conf4.setOutputValueClass(Text.class); //map
+		
+		conf4.set("mapred.textoutputformat.separator", "\t");
+		conf4.setOutputKeyComparatorClass(LongWritable.DecreasingComparator.class);
+		conf4.setMapperClass(MapSorted.class);
+		conf4.setReducerClass(ReduceSorted.class);
+		conf4.setOutputFormat(TextOutputFormat.class);
+		//FileInputFormat.setInputPaths(conf4, new Path("PageRank.iter8.out"));
+		FileInputFormat.setInputPaths(conf4, new Path("s3n://pagerank12/PageRank.iter7.out"));
+		FileOutputFormat.setOutputPath(conf4, new Path("s3n://pagerank12/PageRank.sorted.out"));
+
+		JobClient.runJob(conf4);
+		
+	}
+
+public static void deleteDir(String uri) throws IOException {
+	Configuration config = new Configuration();
+	FileSystem hdfs = FileSystem.get(config);
+	Path path = new Path(uri);
+	hdfs.delete(path, true);
+}
+}
